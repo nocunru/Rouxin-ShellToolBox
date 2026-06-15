@@ -55,6 +55,7 @@ class TerminalActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
 
     private val isTerminalMode: Boolean get() = intent.getBooleanExtra("terminal_mode", false)
+    private val useRoot: Boolean get() = intent.getBooleanExtra("use_root", false)
     private val workDir: String get() = intent.getStringExtra("work_dir") ?: "/data/RouXin"
 
     override fun dispatchKeyEvent(event: KeyEvent?): Boolean {
@@ -156,7 +157,7 @@ class TerminalActivity : AppCompatActivity() {
 
         // 创建 Termux TerminalSession（使用我们的 root shell + script PTY 实现）
         val session = TerminalSession(
-            "su",             // shellPath
+            if (useRoot) "su" else "sh", // shellPath
             dir,              // cwd
             emptyArray(),     // args
             emptyArray(),     // env
@@ -232,7 +233,7 @@ class TerminalActivity : AppCompatActivity() {
 
         // 创建新 session（Phase 2: cd 模式）
         val newSession = TerminalSession(
-            "su", dir, emptyArray(), emptyArray(), null, sessionClientImpl
+            if (useRoot) "su" else "sh", dir, emptyArray(), emptyArray(), null, sessionClientImpl
         )
         newSession.mSessionName = label
         newSession.updateSize(80, 24, 480, 720)

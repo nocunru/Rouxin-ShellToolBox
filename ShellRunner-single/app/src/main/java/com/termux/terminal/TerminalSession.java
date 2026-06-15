@@ -13,6 +13,8 @@ import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
+import com.Rouxin.ShellTool.RxinSandbox;
+
 /**
  * 基于 JNI 原生 PTY 的终端会话。
  * 使用 posix_openpt + fork + exec 创建真实 PTY，替代 Java ProcessBuilder 管道方案。
@@ -67,6 +69,7 @@ public final class TerminalSession extends TerminalOutput {
     public int mScriptMode = 0;
 
     private final String mCwd;
+    private final String mShellPath;
     private final String[] mArgs;
     private final String[] mEnv;
     private final Integer mTranscriptRows;
@@ -86,7 +89,8 @@ public final class TerminalSession extends TerminalOutput {
 
     public TerminalSession(String shellPath, String cwd, String[] args, String[] env,
                            Integer transcriptRows, TerminalSessionClient client) {
-        // shellPath is unused for PTY mode (we always start su)
+        // mShellPath controls the PTY binary: "sh" (non-root) or "su" (root)
+        this.mShellPath = shellPath;
         this.mCwd = cwd;
         this.mArgs = args;
         this.mEnv = env;
@@ -142,7 +146,7 @@ public final class TerminalSession extends TerminalOutput {
         try {
             // ===== 使用 JNI 创建真实 PTY =====
             int[] pidOut = new int[1];
-            mMasterFd = JNI.createSubprocess("su", mCwd, pidOut);
+            mMasterFd = JNI.createSubprocess(mShellPath, mCwd, pidOut);
             if (mMasterFd < 0) throw new IOException("PTY creation failed");
 
             mChildPid = pidOut[0];
@@ -164,11 +168,13 @@ public final class TerminalSession extends TerminalOutput {
             setPtyWindowSize(columns, rows, 0, 0);
 
             // 发送初始 shell 配置（通过 PTY 发送）
-            // su 已经启动在 PTY 中，发送 setup 命令使 shell 进入交互模式
+            // 发送初始 shell 配置（通过 PTY 发送）
+            // ENV 指向 .shinit，exec sh -i 会自动 source
             String setupCmds = "cd '" + mCwd.replace("'", "'\\''") + "' 2>/dev/null\n" +
                 "export TERM=xterm-256color\n" +
                 "export LANG=en_US.UTF-8\n" +
                 "export PATH=/system/bin:/system/xbin:/sbin:/vendor/bin:/data/adb/magisk:$PATH\n" +
+                "export ENV=" + RxinSandbox.getShinitPath() + "\n" +
                 "exec sh -i\n";
             mTermOutput.write(setupCmds.getBytes(StandardCharsets.UTF_8));
             mTermOutput.flush();
