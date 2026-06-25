@@ -12,8 +12,8 @@ android {
         applicationId "com.Rouxin.ShellTool.mp"
         minSdk 28
         targetSdk 34
-        versionCode 373
-        versionName "3.7.3 (多进程)"
+        versionCode 374
+        versionName "3.7.4 (多进程)"
         externalNativeBuild {
             cmake {
                 cppFlags ''

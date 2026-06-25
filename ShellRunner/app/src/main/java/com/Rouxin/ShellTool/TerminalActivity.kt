@@ -52,7 +52,12 @@ class TerminalActivity : AppCompatActivity() {
     private var activeTab: TabSession? = null
     private val handler = Handler(Looper.getMainLooper())
     private var lastScale = 1.0f
+    /** 跟踪由脚本启动的 session，用于结束后按任意键退出 */
+    /** 脚本 session 跟踪：session → (脚本路径, 执行阶段)
+     *  phase=1: sh 执行（首选），phase=2: cd 执行（fallback） */
+    private val scriptSessionInfo = mutableMapOf<TerminalSession, Pair<String, Int>>()
     private val isTerminalMode: Boolean get() = intent.getBooleanExtra("terminal_mode", false)
+    private val useRoot: Boolean get() = intent.getBooleanExtra("use_root", false)
     private val workDir: String get() = intent.getStringExtra("work_dir") ?: "/data/RouXin"
     private var globalLayoutListener: ViewTreeObserver.OnGlobalLayoutListener? = null
 
@@ -222,7 +227,7 @@ class TerminalActivity : AppCompatActivity() {
 
     private fun createNewTerminal(dir: String, label: String, scriptPath: String? = null) {
         val session = TerminalSession(
-            "su", dir, emptyArray(), emptyArray(), null, sessionClientImpl
+            "sh", dir, emptyArray(), emptyArray(), null, sessionClientImpl
         )
         session.mSessionName = label
         session.updateSize(80, 24, 480, 720)
@@ -247,10 +252,17 @@ class TerminalActivity : AppCompatActivity() {
             imm?.showSoftInput(terminalView, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
 
             if (scriptPath != null) {
+                scriptSessionInfo[session] = Pair(scriptPath, 1)
                 val scriptFile = java.io.File(scriptPath)
                 val dir = scriptFile.parent?.replace("'", "'\\''") ?: "/"
                 val name = scriptFile.name.replace("'", "'\\''")
-                session.write("cd '$dir' && stty -echo && (sh './$name' || './$name') ; stty echo\n")
+                // Phase 1: sh 执行，修复回显；exit 确保 session 自然结束
+                // 用 exec 替换 shell 进程，脚本结束后 PTY 自然关闭，不留 exit 在缓冲区
+                if (useRoot) {
+                    session.write("cd '$dir' 2>/dev/null\nsu -c 'sh \"./\$name\"'\nexit\n")
+                } else {
+                    session.write("cd '$dir' 2>/dev/null && exec sh './$name'\n")
+                }
             }
         }, 300)
     }
@@ -322,9 +334,62 @@ class TerminalActivity : AppCompatActivity() {
         tabDivider.visibility = if (tabs.isNotEmpty()) View.VISIBLE else View.GONE
     }
 
+    private fun rebuildTabBar() {
+        tabBar.removeAllViews()
+        tabs.forEach { addTabToBar(it) }
+        updateTabBarVisibility()
+    }
+
+    private fun restartTabWithCd(oldTab: TabSession, scriptPath: String) {
+        val scriptFile = java.io.File(scriptPath)
+        val dir = scriptFile.parent?.replace("'", "'\\''") ?: "/"
+        val name = scriptFile.name.replace("'", "'\\''")
+
+        val session = TerminalSession(
+            "sh", dir, emptyArray(), emptyArray(), null, sessionClientImpl
+        )
+        session.mSessionName = oldTab.label + "(cd)"
+        session.updateSize(80, 24, 480, 720)
+
+        val terminalView = buildTerminalView(session)
+        terminalView.visibility = View.GONE
+        // 先删除旧 view 再添加新 view，避免容器中有残留
+        terminalContainer.removeView(oldTab.terminalView)
+        terminalContainer.addView(terminalView)
+
+        liveSessions.add(session to oldTab.label)
+        scriptSessionInfo[session] = Pair(scriptPath, 2)
+
+        val newTab = TabSession(session, terminalView, oldTab.label)
+        val tabIdx = tabs.indexOf(oldTab)
+        if (tabIdx >= 0) {
+            tabs[tabIdx] = newTab
+        } else {
+            tabs.add(newTab)
+        }
+        rebuildTabBar()
+        switchTo(newTab)
+
+        // 清除旧的 tab bar 和 liveSession
+        liveSessions.removeAll { it.first === oldTab.session }
+        updateTabBarVisibility()
+
+        terminalView.postDelayed({
+            val w = terminalView.width; val h = terminalView.height
+            if (w > 0 && h > 0) {
+                session.updateSize(calculateColumns(w), calculateRows(h), w, h)
+            }
+            // Phase 2: cd 执行，延迟 200ms 确保 PTY writer thread + exec sh -i 已完成
+            // 用 exec 替换 shell 进程，脚本结束后 PTY 自然关闭，不留 exit 在缓冲区
+            session.write("cd '$dir' 2>/dev/null && exec ./'$name'\n")
+            terminalView.requestFocus()
+        }, 200)
+    }
+
     private fun closeSession(tab: TabSession) {
         tab.session.finishIfRunning()
         liveSessions.removeAll { it.first === tab.session }
+        scriptSessionInfo.remove(tab.session)
         val tb = tabBar.findViewWithTag<View>(tab.session.hashCode())
         tb?.let { tabBar.removeView(it) }
         tabs.remove(tab)
@@ -549,6 +614,22 @@ class TerminalActivity : AppCompatActivity() {
                     stopButton.visibility = View.GONE
                     if (!isTerminalMode) inputArea.visibility = View.GONE
                     updateTabUI(tab)
+
+                    // 脚本 session：退出信息 + 失败时 Phase 2 fallback
+                    val info = scriptSessionInfo[session]
+                    if (info != null) {
+                        val (scriptPath, phase) = info
+                        val exitCode = try { session.exitStatus } catch (_: Exception) { -1 }
+                        session.feedText("\n\n—— 进程已退出（退出码: $exitCode）——\n")
+
+                        if (exitCode != 0 && phase == 1) {
+                            // Phase 1 (sh) 失败 → Phase 2: cd 执行
+                            scriptSessionInfo.remove(session)
+                            handler.post({
+                                restartTabWithCd(tab, scriptPath)
+                            })
+                        }
+                    }
                 }
             }
         }

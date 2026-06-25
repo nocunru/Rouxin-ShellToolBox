@@ -32,6 +32,10 @@ public final class TerminalSession extends TerminalOutput {
 
     TerminalSessionClient mClient;
 
+    /** RXin sandbox PATH override - set before session start */
+    public static String RXIN_PATH_OVERRIDE = null;
+    public static String RXIN_ENV_OVERRIDE = null;
+
     int mShellPid;
     int mShellExitStatus;
     public String mSessionName;
@@ -81,7 +85,7 @@ public final class TerminalSession extends TerminalOutput {
 
     public TerminalSession(String shellPath, String cwd, String[] args, String[] env,
                            Integer transcriptRows, TerminalSessionClient client) {
-        // shellPath is unused for PTY mode (we always start su)
+        // shellPath is unused for PTY mode (sh for normal, su for root)
         this.mCwd = cwd;
         this.mArgs = args;
         this.mEnv = env;
@@ -137,7 +141,7 @@ public final class TerminalSession extends TerminalOutput {
         try {
             // ===== 使用 JNI 创建真实 PTY =====
             int[] pidOut = new int[1];
-            mMasterFd = JNI.createSubprocess("su", mCwd, pidOut);
+            mMasterFd = JNI.createSubprocess("sh", mCwd, pidOut);
             if (mMasterFd < 0) throw new IOException("PTY creation failed");
 
             mChildPid = pidOut[0];
@@ -159,12 +163,13 @@ public final class TerminalSession extends TerminalOutput {
             setPtyWindowSize(columns, rows, 0, 0);
 
             // 发送初始 shell 配置（通过 PTY 发送）
-            // su 已经启动在 PTY 中，发送 setup 命令
+            // sh 已启动在 PTY 中，发送 setup 命令
             String setupCmds = "cd '" + mCwd.replace("'", "'\\''") + "' 2>/dev/null\n" +
                 "export TERM=xterm-256color\n" +
                 "export LANG=en_US.UTF-8\n" +
-                "export PATH=/system/bin:/system/xbin:/sbin:/vendor/bin:/data/adb/magisk:$PATH\n" +
-                "exec sh -i\n";
+                "export PATH=" + (RXIN_PATH_OVERRIDE != null ? RXIN_PATH_OVERRIDE + ":" : "") + "/system/bin:/system/xbin:/sbin:/vendor/bin:$PATH\n" +
+                ". /data/data/com.Rouxin.ShellTool.mp/RXin/.shinit\n" +
+                "printf '\u001b[2J\u001b[H'\n";
             mTermOutput.write(setupCmds.getBytes(StandardCharsets.UTF_8));
             mTermOutput.flush();
 
@@ -172,7 +177,7 @@ public final class TerminalSession extends TerminalOutput {
             mShellPid = mChildPid;
 
             // ===== 读取线程：PTY master → ByteQueue → TerminalEmulator =====
-            // 注意：不使用 waitPid 检测进程退出，因为 su 可能 fork 子进程后立即退出。
+            // 注意：不使用 waitPid 检测进程退出，因为 sh/su 可能 fork 子进程后立即退出。
             // 改为监控 PTY master 的 EOF：当所有附属进程关闭 slave 时，read() 返回 -1，
             // 此时才真正意味 shell 已退出。
             mReaderThread = new Thread("TermSessionInputReader") {
@@ -322,5 +327,14 @@ public final class TerminalSession extends TerminalOutput {
     }
 
     void notifyScreenUpdate() {}
+
+    /** 绕过 PTY 直接向 emulator buffer 追加文本（用于退出提示等） */
+    public void feedText(String text) {
+        if (mEmulator != null) {
+            byte[] bytes = text.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            mEmulator.append(bytes, bytes.length);
+            notifyScreenUpdate();
+        }
+    }
 
 }
