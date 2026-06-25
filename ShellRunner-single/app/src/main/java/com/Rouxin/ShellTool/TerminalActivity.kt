@@ -216,7 +216,7 @@ class TerminalActivity : AppCompatActivity() {
                 val scriptName = scriptFile.name.replace("'", "'\\''")
                 session.mScriptPath = scriptPath  // 用于 onSessionFinished fallback
                 session.mScriptMode = 1  // 标记当前为 sh 执行
-                val cmd = "cd '" + scriptDir + "' 2>/dev/null ; sh '" + scriptName + "' ; exit\n"
+                val cmd = "cd '" + scriptDir + "' && sh '" + scriptName + "' ; exit\n"
                 session.write(cmd)
             }
         }, 300)
@@ -290,7 +290,7 @@ class TerminalActivity : AppCompatActivity() {
             val scriptFile2 = java.io.File(scriptPath)
             val scriptDir2 = scriptFile2.canonicalFile.parent?.replace("'", "'\\''") ?: "/"
             val scriptName2 = scriptFile2.name.replace("'", "'\\''")
-            val cmd = "cd '" + scriptDir2 + "' 2>/dev/null && './" + scriptName2 + "' ; exit\n"
+            val cmd = "cd '" + scriptDir2 + "' && './" + scriptName2 + "' ; exit\n"
             newSession.write(cmd)
         }, 300)
     }

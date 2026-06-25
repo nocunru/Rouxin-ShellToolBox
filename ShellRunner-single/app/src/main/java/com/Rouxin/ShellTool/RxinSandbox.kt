@@ -1,6 +1,5 @@
 package com.Rouxin.ShellTool
 
-import android.content.Context
 import android.util.Base64
 import java.io.File
 
@@ -21,23 +20,17 @@ object RxinSandbox {
         return "/data/data/com.Rouxin.ShellTool/RXin/.shinit"
     }
 
-    @JvmStatic fun createSandbox(context: Context, useRoot: Boolean) {
+    @JvmStatic fun createSandbox() {
         if (initialized) return
         initialized = true
 
         val home = getHome()
         val binDir = "$home/bin"
-        val shinitPath = "$home/.shinit"
 
-        createViaFileApi(home, binDir, shinitPath)
-
-        // Also try /data/local/tmp if root
-        if (useRoot) {
-            linkToDataLocalTmp(home, binDir)
-        }
+        createViaFileApi(home, binDir)
     }
 
-    private fun createViaFileApi(home: String, binDir: String, shinitPath: String) {
+    private fun createViaFileApi(home: String, binDir: String) {
         File(binDir).mkdirs()
         File("$home/lib").mkdirs()
         File("$home/etc").mkdirs()
@@ -56,20 +49,6 @@ object RxinSandbox {
 
         File(binDir).listFiles()?.forEach { file ->
             if (file.isFile) file.setExecutable(true, false)
-        }
-    }
-
-    private fun linkToDataLocalTmp(home: String, binDir: String) {
-        val tmpHome = "/data/local/tmp/RXin"
-        try {
-            val proc = Runtime.getRuntime().exec("su")
-            val os = proc.outputStream
-            os.write(("cp -r " + home + " " + tmpHome + "\n").toByteArray(Charsets.UTF_8))
-            os.write("exit\n".toByteArray(Charsets.UTF_8))
-            os.flush()
-            proc.waitFor()
-        } catch (e: Exception) {
-            // Fallback to app data dir
         }
     }
 

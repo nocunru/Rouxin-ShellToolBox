@@ -58,7 +58,7 @@ class MainActivity : AppCompatActivity() {
         hasRoot = checkRootAccess()
         initWorkDir()
         initViews()
-        RxinSandbox.createSandbox(this, hasRoot)
+        RxinSandbox.createSandbox()
     }
 
     private fun checkRootAccess(): Boolean {
